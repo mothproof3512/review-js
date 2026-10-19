@@ -260,3 +260,8 @@ it in one paste, inside the logged-in session, with a report at the end.
 Run only on systems you own or have written authorisation to test. The script is passive, but
 the manual follow-ups it recommends (redirect payloads, CORS probes, CSWSH) are not, and are
 illegal without permission in most jurisdictions.
+
+## Changelog
+
+- **1.0.1** — Taint tracking no longer reports the tool's own internal requests (e.g. `location.hash → fetch(url)` with a stack entirely inside "debugger eval code" / `VM…`). Hits whose call stack contains no frame from the site's own scripts are dropped; the advice text now says how to recognise a self-hit.
+- **1.0.0** — First public release.

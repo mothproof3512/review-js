@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         review.js — client-side security review
 // @namespace    review.js
-// @version      1.0.0
+// @version      1.0.1
 // @description  Passive client-side security review in the console (taint canaries, CSP evaluator, library CVEs, secrets, DOM sinks). Ctrl+Shift+R or the menu.
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -13,7 +13,7 @@
   window.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'r') { e.preventDefault(); run(); } }, true);
   const REVIEW_SRC = `/*
  * review.js — passive client-side security review, run from the browser console.
- * v1.0.0  ·  Chrome + Firefox  ·  no dependencies  ·  nothing is exploited
+ * v1.0.1  ·  Chrome + Firefox  ·  no dependencies  ·  nothing is exploited
  *
  * Inspired by PortSwigger DOM Invader (taint canaries), Retire.js (library CVE ranges),
  * Google CSP Evaluator (bypass hosts, nonce checks), jsluice (endpoint extraction) and TruffleHog (secret detectors).
@@ -31,10 +31,12 @@
  */
 (async () => {
   'use strict';
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const CFG = Object.assign({ fetchScripts: true, sourcemaps: true, taint: true, gadgets: true, maxScriptKB: 1500, quiet: false }, window.__REVIEW_CFG || {});
   const SEV = { high: 0, medium: 1, low: 2, info: 3 };
   const F = [];
+  const TAINT = window.__REVIEW_TAINT__ || (window.__REVIEW_TAINT__ = { hits: [], installed: false, canaries: new Set(), suppress: false });
+  TAINT.suppress = true;
   const ctx = { origin: location.origin, https: location.protocol === 'https:', headers: {}, csp: null, cspRaw: '', scripts: [], errors: [], libs: [], endpoints: new Map() };
 
   /* ================= helpers ================= */
@@ -408,11 +410,10 @@
   });
 
   /* ================= 10. taint tracking (DOM Invader-style canaries) ================= */
-  const TAINT = window.__REVIEW_TAINT__ || (window.__REVIEW_TAINT__ = { hits: [], installed: false, canaries: new Set() });
   function installTaintHooks() {
     if (TAINT.installed) return; TAINT.installed = true;
     const seen = v => { const s = String(v); for (const c of TAINT.canaries) if (s.includes(c)) return c; return null; };
-    const report = (sink, v) => { const c = seen(v); if (!c) return; const st = (new Error().stack || '').split('\\n').slice(2, 6).join(' | '); TAINT.hits.push({ sink, canary: c, value: trunc(v, 120), stack: st }); };
+    const report = (sink, v) => { if (TAINT.suppress) return; const c = seen(v); if (!c) return; const frames = (new Error().stack || '').split('\\n').slice(2, 8); const own = /debugger eval code|VM\\d+|<anonymous>|review\\.js/; const external = frames.filter(f => f.trim() && !own.test(f)); if (!external.length) return; TAINT.hits.push({ sink, canary: c, value: trunc(v, 120), stack: frames.slice(0, 4).join(' | ') }); };
     const wrapSet = (proto, prop, sink) => { const d = Object.getOwnPropertyDescriptor(proto, prop); if (!d || !d.set) return; Object.defineProperty(proto, prop, { configurable: true, enumerable: d.enumerable, get: d.get, set(v) { report(sink, v); return d.set.call(this, v); } }); };
     const wrapFn = (obj, prop, sink, argIdx) => { const f = obj && obj[prop]; if (typeof f !== 'function') return; obj[prop] = function () { report(sink, arguments[argIdx == null ? 0 : argIdx]); return f.apply(this, arguments); }; try { obj[prop].toString = () => f.toString(); } catch (e) { } };
     wrapSet(Element.prototype, 'innerHTML', 'innerHTML'); wrapSet(Element.prototype, 'outerHTML', 'outerHTML'); wrapSet(HTMLIFrameElement.prototype, 'srcdoc', 'iframe.srcdoc'); wrapSet(HTMLScriptElement.prototype, 'src', 'script.src'); wrapSet(HTMLScriptElement.prototype, 'text', 'script.text'); wrapSet(HTMLAnchorElement.prototype, 'href', 'a.href'); wrapSet(HTMLIFrameElement.prototype, 'src', 'iframe.src'); wrapSet(HTMLEmbedElement.prototype, 'src', 'embed.src'); wrapSet(HTMLObjectElement.prototype, 'data', 'object.data'); wrapSet(HTMLFormElement.prototype, 'action', 'form.action');
@@ -424,7 +425,7 @@
   }
   async function runTaint(opts) {
     opts = opts || {}; installTaintHooks(); const mk = src => { const c = 'rvt' + src + Math.random().toString(36).slice(2, 8); TAINT.canaries.add(c); return c; };
-    const before = TAINT.hits.length; const saveHash = location.hash, saveName = window.name;
+    const before = TAINT.hits.length; const saveHash = location.hash, saveName = window.name; TAINT.suppress = false;
     const cHash = mk('hash'), cName = mk('name'), cMsg = mk('msg'), cRef = null;
     try { history.replaceState(history.state, '', location.pathname + location.search + '#' + cHash + '=<img src=x>'); window.dispatchEvent(new HashChangeEvent('hashchange')); } catch (e) { }
     try { window.name = cName; } catch (e) { }
@@ -434,16 +435,18 @@
     if (opts.storage) { cStore = mk('store'); for (const k of Object.keys({ ...localStorage })) { try { const v = localStorage.getItem(k); if (v != null && v.length < 2000) { backup[k] = v; localStorage.setItem(k, /^eyJ/.test(v) ? v : v + cStore); } } catch (e) { } } }
     if (opts.cookie) { cCookie = mk('cookie'); document.cookie = '__rv_t=' + cCookie + '; path=/'; }
     await new Promise(r => setTimeout(r, opts.wait || 1500));
+    TAINT.suppress = true;
     try { history.replaceState(history.state, '', location.pathname + location.search + saveHash); } catch (e) { } try { window.name = saveName; } catch (e) { }
     if (opts.storage) { for (const k of Object.keys(backup)) { try { localStorage.setItem(k, backup[k]); } catch (e) { } } }
     if (opts.cookie) document.cookie = '__rv_t=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     const self = { msg: 'postMessage', cookie: 'document.cookie', store: 'storage.setItem' };
     const hits = TAINT.hits.slice(before).filter(h => self[h.canary.slice(3).replace(/[0-9a-z]{6}$/, '')] !== h.sink); const label = { hash: 'location.hash', name: 'window.name', msg: 'postMessage', store: 'localStorage', cookie: 'document.cookie' };
     const grouped = {}; hits.forEach(h => { const src = label[h.canary.slice(3).replace(/[0-9a-z]{6}$/, '')] || h.canary; const key = src + ' → ' + h.sink; (grouped[key] = grouped[key] || []).push(h); });
-    Object.entries(grouped).forEach(([k, hs]) => { const sev = /innerHTML|outerHTML|insertAdjacentHTML|document\\.write|eval|Function|setTimeout|srcdoc|script\\.|jQuery|DOMParser|createContextual|setAttribute/.test(k) ? 'high' : /location|a\\.href|iframe\\.src|window\\.open|form\\.action|fetch|xhr/.test(k) ? 'medium' : 'low'; add('TNT-01', sev, 'taint', 'Taint confirmed: ' + k, trunc(hs[0].value, 100) + ' · ' + trunc(hs[0].stack, 200), sev === 'high' ? 'An attacker-controlled source reaches an HTML/JS execution sink without being neutralised. Reproduce with a real payload on a test instance; fix by using textContent / DOMPurify / Trusted Types.' : 'Attacker-controlled source reaches a navigation/request sink: open redirect, SSRF-via-browser or data exfiltration candidate. Validate against an allow-list.', 'WSTG-CLNT-01 / CWE-79', false); });
+    Object.entries(grouped).forEach(([k, hs]) => { const sev = /innerHTML|outerHTML|insertAdjacentHTML|document\\.write|eval|Function|setTimeout|srcdoc|script\\.|jQuery|DOMParser|createContextual|setAttribute/.test(k) ? 'high' : /location|a\\.href|iframe\\.src|window\\.open|form\\.action|fetch|xhr/.test(k) ? 'medium' : 'low'; add('TNT-01', sev, 'taint', 'Taint confirmed: ' + k, trunc(hs[0].value, 100) + ' · ' + trunc(hs[0].stack, 200), sev === 'high' ? 'Check the stack: frames must point into the site\\'s own files, not into the console ("debugger eval code" / "VM…" = this tool). An attacker-controlled source reaches an HTML/JS execution sink without being neutralised. Reproduce with a real payload on a test instance; fix by using textContent / DOMPurify / Trusted Types.' : 'Attacker-controlled source reaches a navigation/request sink: open redirect, SSRF-via-browser or data exfiltration candidate. Validate against an allow-list.', 'WSTG-CLNT-01 / CWE-79', false); });
     return hits;
   }
   if (CFG.taint) await safe('taint', () => runTaint({ wait: 1200 }));
+  TAINT.suppress = true;
 
   /* ================= 11. service workers & permissions ================= */
   await safe('workers', async () => {
