@@ -80,6 +80,11 @@ review.js 1.0.0  ·  shop.example.com/login  ·  grade F
   script on the login page might be the customer's SSO provider; a `innerHTML` might only ever
   receive constants. Go and look before you write it up.
 
+**How the next steps work.** Running `review.js` once leaves an object called `__review` behind on
+the page. Steps 5–7 are commands you type on the empty `>` line at the bottom of the same Console,
+one at a time, after the findings have printed. You do not remove or re-paste the script; it stays
+loaded until you reload the page or navigate to another URL (then paste it again).
+
 **5. Get the report.** Type in the Console:
 
 ```javascript
@@ -99,7 +104,9 @@ __review.monitor()
 Then do things on the page: log in, search, change a setting. Every `fetch`/XHR request and
 response, every WebSocket message, every `postMessage`, every write to `innerHTML`, `eval`,
 `localStorage` and `document.cookie` is now logged with the line of code that did it. This is how
-you learn what the application actually does with your data. Reload the page to switch it off.
+you learn what the application actually does with your data. The yellow `[monitor]` lines appear on
+their own while you click; collapse them with the triangle or type `-monitor` in the Console filter box
+to hide them for a moment. Reload the page to switch the monitors off.
 
 **7. Go deeper on DOM XSS.** Type:
 
