@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         review.js — client-side security review
 // @namespace    review.js
-// @version      3.0
+// @version      1.0.0
 // @description  Passive client-side security review in the console (taint canaries, CSP evaluator, library CVEs, secrets, DOM sinks). Ctrl+Shift+R or the menu.
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -13,7 +13,7 @@
   window.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'r') { e.preventDefault(); run(); } }, true);
   const REVIEW_SRC = `/*
  * review.js — passive client-side security review, run from the browser console.
- * v3.0  ·  Chrome + Firefox  ·  no dependencies  ·  nothing is exploited
+ * v1.0.0  ·  Chrome + Firefox  ·  no dependencies  ·  nothing is exploited
  *
  * Inspired by PortSwigger DOM Invader (taint canaries), Retire.js (library CVE ranges),
  * Google CSP Evaluator (bypass hosts, nonce checks), jsluice (endpoint extraction) and TruffleHog (secret detectors).
@@ -31,7 +31,7 @@
  */
 (async () => {
   'use strict';
-  const VERSION = '3.0';
+  const VERSION = '1.0.0';
   const CFG = Object.assign({ fetchScripts: true, sourcemaps: true, taint: true, gadgets: true, maxScriptKB: 1500, quiet: false }, window.__REVIEW_CFG || {});
   const SEV = { high: 0, medium: 1, low: 2, info: 3 };
   const F = [];

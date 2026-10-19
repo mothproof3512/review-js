@@ -1,6 +1,6 @@
 # Client-side security review: localhost:8765
 
-`http://localhost:8765/login/?next=/dashboard`  ·  2026-10-19T07:35:59.914Z  ·  review.js 3.0  ·  grade **F**
+`http://localhost:8765/login/?next=/dashboard`  ·  2026-10-19T07:35:59.914Z  ·  review.js 1.0.0  ·  grade **F**
 
 | High | Medium | Low | Info |
 |---|---|---|---|

@@ -1,45 +1,201 @@
-# review.js — passive client-side security review from the browser console
+# review.js
 
-One file, no dependencies, Chrome + Firefox. Version 3 adds **taint tracking with canaries**
-(the DOM Invader idea), a **library CVE database** (Retire.js style, ~50 libraries), a **CSP
-evaluator** modelled on Google's (bypass hosts, nonce length and reuse, strict-dynamic logic),
-**prototype-pollution gadget tests**, **endpoint extraction with HTTP methods** (jsluice style)
-and ~35 **secret detectors** including decoding of embedded JWTs (TruffleHog style). Paste it into the Console on any page you are
-authorised to test and you get a graded, referenced list of client-side findings in under a
-second, plus Markdown/JSON export for your report. Nothing is exploited: every check reads the
-page, its headers, cookies, storage and same-origin scripts; the only requests it makes are a
-re-fetch of the current page (to read headers), the page's own same-origin scripts, and optional
-`HEAD` probes for `.map` files.
+**A passive client-side security review you run from the browser's Console.**
+Paste one file into DevTools on a page you are allowed to test, press Enter, and in about a second
+you get a graded list of findings — each with the evidence, what to do about it, and the OWASP /
+CWE reference — plus a Markdown report you can paste straight into your write-up.
+
+It never attacks anything. It reads what the browser already has: the page, its headers, cookies,
+storage and scripts. That makes it safe to run on every page of an engagement, inside your
+logged-in session, as the first thing you do before reaching for Burp or ZAP.
+
+> **Authorisation first.** Only run this on systems you own or have written permission to test.
+> The script itself is passive, but the manual follow-ups it suggests (redirect payloads, CORS
+> probes) are not.
+
+---
+
+## What is in this folder
+
+| File | What it is | When you use it |
+|---|---|---|
+| **`review.js`** | The tool. One self-contained JavaScript file, no dependencies, Chrome + Firefox. | Paste it into the Console. This is the only file you actually need. |
+| `review-bookmarklet.txt` | The same tool, minified and prefixed with `javascript:` so it fits in a bookmark. | Make a bookmark with this as the URL; click it on any page instead of pasting. |
+| `review.user.js` | The same tool wrapped as a Tampermonkey / Violentmonkey userscript. | Install once; press `Ctrl+Shift+R` on any page, or pick "Run review.js" from the extension menu. |
+| `sample-report.md` | A real Markdown report produced by `__review.md()` on a deliberately broken test site. | Read it to see what output looks like before you run anything. |
+| `README.md` | This file. | — |
+| `LICENSE` | MIT. | Use it, fork it, ship it; keep the notice. |
+
+The three "tool" files are generated from `review.js` and run the same checks; pick whichever is
+convenient.
+
+---
+
+## Your first ten minutes
+
+You need: a browser (Chrome, Edge, Brave or Firefox), a page you are allowed to test, and
+`review.js` open in a text editor.
+
+**1. Open the page and log in** with your test account. The review is most useful on the pages that
+matter: login, account settings, checkout, anything with a form or a token.
+
+**2. Open the Console.** Press `F12`, then click the **Console** tab. (Mac: `Cmd+Option+J`.)
+If the Console shows a warning about pasting — Chrome does this the first time — type
+`allow pasting` and press Enter, as it asks.
+
+**3. Paste the whole of `review.js` and press Enter.** You will see something like:
 
 ```
-__review.findings          every finding: {id, severity, area, title, evidence, advice, ref, manual}
-__review.md()              Markdown report              __review.copy('md')
-__review.json()            JSON report                  __review.copy('json')
-__review.taint({storage:true, cookie:true})   deeper taint run: canaries also into storage/cookie (auto-restored)
-__review.monitor()         opt-in runtime monitors (fetch, XHR, WebSocket, postMessage,
-                           innerHTML, eval, document.write, storage, cookie, message listeners)
-__review.endpoints / .libraries / .headers / .csp / .globals / .taintHits
+review.js 1.0.0  ·  shop.example.com/login  ·  grade F
+┌───────────┬───────┐
+│ high      │ 3     │
+│ medium    │ 8     │
+│ low       │ 3     │
+│ info      │ 14    │
+│ auth page │ true  │
+│ scripts   │ 4     │
+│ endpoints │ 7     │
+└───────────┴───────┘
+▸ HIGH 3
+▸ MEDIUM 8
+▸ LOW 3
+▸ INFO 14
+```
+
+**4. Click the `▸ HIGH` group open, then click a finding.** Every finding has the same four lines:
+
+```
+▸ CKY-01 Session-looking cookie readable by JavaScript (no HttpOnly)
+    evidence: sessionid
+    advice:   Set `HttpOnly` on session cookies; any XSS can otherwise read document.cookie
+              and hijack the session. Verify in Application/Storage → Cookies.
+    ref:      WSTG-SESS-02 / CWE-1004
+```
+
+- **ID** (`CKY-01`) — stable name for the check; use it in your notes and when searching this README.
+- **evidence** — copied from the page, so you can show exactly what was observed.
+- **advice** — what the developer should change, and how you can confirm it by hand.
+- **ref** — the OWASP Web Security Testing Guide section and/or CWE number to cite in the report.
+- **(verify by hand)** after the title means the tool found a *pointer*, not a verdict. A third-party
+  script on the login page might be the customer's SSO provider; a `innerHTML` might only ever
+  receive constants. Go and look before you write it up.
+
+**5. Get the report.** Type in the Console:
+
+```javascript
+__review.copy('md')
+```
+
+The Markdown report is now on your clipboard. Paste it into your notes. It contains the summary
+table, every finding, the list of API endpoints the JavaScript talks to, the libraries detected, and
+the response headers.
+
+**6. Use the app while the monitors watch.** Type:
+
+```javascript
+__review.monitor()
+```
+
+Then do things on the page: log in, search, change a setting. Every `fetch`/XHR request and
+response, every WebSocket message, every `postMessage`, every write to `innerHTML`, `eval`,
+`localStorage` and `document.cookie` is now logged with the line of code that did it. This is how
+you learn what the application actually does with your data. Reload the page to switch it off.
+
+**7. Go deeper on DOM XSS.** Type:
+
+```javascript
+__review.taint({storage: true, cookie: true})
+```
+
+The tool now plants unique markers in `location.hash`, `window.name`, a `postMessage`, every
+`localStorage` value and a cookie (all restored afterwards), and watches 25 dangerous sinks. If a
+marker arrives in one, you get a `TNT-01` finding with the value and the call stack: a confirmed
+source→sink flow, not a guess.
+
+That is the whole workflow. Repeat 3–7 on each interesting page.
+
+---
+
+## Reading the grade
+
+| Grade | Meaning |
+|---|---|
+| **A** | nothing above *info* |
+| **B** | only *low* findings |
+| **C** | one *medium* |
+| **D** | several *medium* |
+| **F** | at least one *high* |
+
+The grade is a triage aid for you, not a score for the customer. A page can be an **A** here and
+still have a broken authorisation model, because no client-side check can see the server.
+
+Rough severity guide: **high** = direct credential/session/code-execution exposure (secret in the
+bundle, session cookie without HttpOnly, confirmed taint to `innerHTML`, static CSP nonce);
+**medium** = a real weakness that needs a second condition to exploit (token in localStorage,
+missing CSRF token, vulnerable library version); **low** = hardening gaps; **info** = inventory and
+things to be aware of.
+
+---
+
+## What the tool cannot tell you (and what to do instead)
+
+The last *info* finding on every run, `INV-02`, lists this. In short, anything that happens on the
+server is invisible from the browser:
+
+| Question | How you answer it |
+|---|---|
+| Does the error differ for a wrong password vs an unknown user? (user enumeration) | Two logins in Network tab; compare status, text and timing. |
+| Is there rate limiting / lockout? | A handful of failed logins; watch for 429, delays, CAPTCHA. |
+| Does the session id change on login, and die on logout? | Note the cookie before/after login; reuse an old token after logout (Burp Repeater). |
+| Can MFA be skipped? | After password step, hit a protected endpoint from `INV-01` directly. |
+| Is the `JS-03` sink really exploitable? | `__review.taint()` first; then a real payload on a test instance. |
+| Is the `RED-01` redirect really open? | Try the payloads listed in the finding, with your own account. |
+| Can I see another user's object? (IDOR) | Take ids from `JS-21` / `INV-01`, swap them, same session. |
+
+Use the endpoint table in the report as your scope for Burp / ZAP.
+
+---
+
+## Configuration (optional)
+
+Set this **before** pasting the script to change defaults:
+
+```javascript
+window.__REVIEW_CFG = {
+  fetchScripts: true,   // download and scan same-origin scripts (set false on huge SPAs if slow)
+  sourcemaps:   true,   // HEAD-probe for public .map files
+  taint:        true,   // run the light taint pass automatically (hash, window.name, postMessage)
+  gadgets:      true,   // test jQuery/lodash/... for prototype-pollution gadgets (cleaned up)
+  maxScriptKB:  1500,   // per-script size cap
+  quiet:        false   // true = no console output, just window.__review
+}
+```
+
+After a run, everything lives on `window.__review`:
+
+```
+__review.findings     array of {id, severity, area, title, evidence, advice, ref, manual}
+__review.md()         Markdown report      __review.copy('md')
+__review.json()       JSON report          __review.copy('json')
+__review.taint(opts)  deeper taint run     __review.monitor()   runtime monitors
+__review.endpoints    [{url, methods, params, from}]      __review.libraries   [{name, version, via}]
+__review.headers      __review.csp      __review.globals     __review.taintHits
 __review.help()
 ```
 
-Configure before running (optional):
+---
 
-```javascript
-window.__REVIEW_CFG = { fetchScripts: true, sourcemaps: true, taint: true, gadgets: true, maxScriptKB: 1500, quiet: false }
-```
+## Running it in Firefox
 
-## Three ways to run it
+Firefox has no "Snippets" panel; use the Console's multi-line editor: press `Ctrl+B` in the
+Console, paste (or `Ctrl+O` to open `review.js` from disk), then `Ctrl+Enter`. The editor remembers
+its contents. Everything else works the same; the one difference is that cookie attributes
+(`Secure`/`SameSite`) are read from the **Storage** panel rather than detected automatically, and
+the tool says so (`CKY-06`).
 
-| How | Chrome | Firefox |
-|---|---|---|
-| **Paste** `review.js` into the Console | F12 → Console → paste → Enter | same |
-| **Saved snippet** | Sources → Snippets → New → paste → `Ctrl+Enter` | Console → `Ctrl+B` (multi-line editor) → `Ctrl+O` open `review.js` → `Ctrl+Enter` |
-| **Bookmarklet** | new bookmark, URL = contents of `review-bookmarklet.txt` | same |
-| **Userscript** | Tampermonkey/Violentmonkey → install `review.user.js` → `Ctrl+Shift+R` on any page, or the extension menu | same |
+---
 
-The bookmarklet and userscript are generated from `review.js`; they are byte-for-byte the same checks.
-
-## What it checks
+## Reference: every check
 
 Each finding carries an ID (`AREA-nn`), a severity (high / medium / low / info), evidence
 copied from the page, concrete remediation advice, and a reference to the OWASP Web Security
@@ -73,21 +229,7 @@ The ideas are borrowed, with thanks, from tools that do each part more deeply: P
 **TruffleHog** (secret detectors). Use those when you need the full depth; use this when you need all of
 it in one paste, inside the logged-in session, with a report at the end.
 
-## Grade
 
-`A` nothing above info · `B` lows only · `C` one medium · `D` several mediums · `F` any high.
-It is a triage aid, not a certification: a page can be `A` here and still have a broken
-authorisation model, which no client-side check can see.
-
-## Monitors (`__review.monitor()`)
-
-Wraps the APIs an attacker would use and logs every call with a stack trace, collapsed in the
-console: `fetch`/XHR with request body and response preview, WebSocket open/send/receive,
-outgoing `postMessage` and incoming `message` events with origin, `innerHTML` writes that
-contain markup, `eval`, `document.write`, `localStorage/sessionStorage.setItem`,
-`document.cookie =`, and new `message` listeners. Turn it on, then use the application:
-log in, search, change settings. Everything the JavaScript does with your data is now visible,
-with the line of code that did it. Reload to disable.
 
 ## What it deliberately does not do
 
@@ -105,14 +247,6 @@ with the line of code that did it. Reload to disable.
 - Cookie `HttpOnly` is inferred (readable ⇒ missing); `Secure`/`SameSite` need the Cookie
   Store API (Chrome) or the Storage panel (Firefox).
 
-## Interpreting a run
-
-1. Fix or verify everything **high** first; each one is a direct credential/session exposure.
-2. Any **`TNT-01`** is a confirmed source→sink flow: reproduce it with a real payload on a test
-   instance. `JS-03` (static co-occurrence) is the list of places to look next.
-3. `RED-01` lists the exact payloads to try for open redirect; do it with your own account.
-4. `INV-01` endpoints plus `JS-16` privileged endpoints are your authorisation test list.
-5. Paste `__review.copy('md')` into the report; the evidence lines are already quoted.
 
 ## Ethics
 
